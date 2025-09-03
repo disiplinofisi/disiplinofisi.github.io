@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<title>Eğitim Raporu</title>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<style>
+ body{
+   font-family:sans-serif;
+   max-width:800px;
+   margin:20px auto;
+   background:#0f1320;
+   color:#eee;
+   position: relative;
+ }
+
+ /* Arkaplan resmi */
+ body::before {
+   content: "";
+   position: fixed;
+   top: 0; left: 0;
+   width: 100%; height: 100%;
+   background: url('logo2.png') no-repeat center center;
+   background-size: cover;
+   opacity: 0.5;   /* %50 opaklık */
+   z-index: -1;    /* tüm içeriğin arkasında */
+ }
+
+ label{display:block;margin-top:10px;font-weight:bold}
+ input,select,button{margin-top:5px;padding:8px;width:100%;border-radius:6px;border:1px solid #444;background:#1a1f36;color:#fff}
+ button{cursor:pointer}
+ .ok{color:#22c55e;font-weight:bold}
+ .fail{color:#ef4444;font-weight:bold}
+ .result{margin-top:20px;padding:15px;background:#161a2b;border-radius:8px}
+
+/* Yüklenme ekranı */
+#loader {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  background: #0f1320;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 9999;
+}
+#loader img {
+  width: 120px;
+  height: 120px;
+  animation: spin 2s linear infinite;
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Sayfa içinde sağ-sol logolar */
+.side-logo {
+  position: fixed;
+  top: 50%;
+  width: 250px;   /* büyük boyut */
+  transform: translateY(-50%);
+  opacity: 1;     /* %100 net */
+  z-index: 1;
+
+}
+.side-logo.left { left: 10px; }
+.side-logo.right { right: 10px; }
+</style>
+</head>
+<body>
+
+<!-- Yüklenme ekranı -->
+<div id="loader">
+  <img src="logo.png" alt="Logo">
+</div>
+
+<!-- Sağ ve sol logolar -->
+<img src="logo.png" class="side-logo left" alt="Logo">
+<img src="logo.png" class="side-logo right" alt="Logo">
+
+<h1>📋 Eğitim Raporu Sistemi</h1>
+
+<form id="reportForm">
+  <label>Oyun Nickname <input name="nick" required></label>
+  <label>Rütbe <input name="rank" required></label>
+  <label>Denetlenen Kişi <input name="target" required></label>
+  <label>Eğitim Türü <input name="type" required></label>
+
+  <label>Fotoğraflar (5 adet, sırasıyla kriterler için)
+    <input type="file" name="photos" accept="image/*" multiple required>
+  </label>
+
+  <button type="submit">Taramayı Başlat</button>
+</form>
+
+<div id="output" class="result" style="display:none"></div>
+
+<button id="sendDiscord" style="display:none">Discord’a Gönder</button>
+
+<script>
+// ---- Kriterler ----
+const CRITERIA = [
+  { name:"Kendini tanıtma", keywords:["merhaba","benim adım","selam"] },
+  { name:"Kuralları anlatma", keywords:["kural","yasak","dikkat"] },
+  { name:"Oyuna giriş", keywords:["başla","oyuna","giriş"] },
+  { name:"İletişim kuralları", keywords:["saygı","dinlemek","iletişim"] },
+  { name:"Kapanış", keywords:["iyi oyunlar","teşekkür","görüşürüz"] }
+];
+
+// ---- Normalize helper ----
+function normalize(str){
+  const map={'İ':'i','I':'i','Ş':'s','Ğ':'g','Ü':'u','Ö':'o','Ç':'c',
+             'ı':'i','ş':'s','ğ':'g','ü':'u','ö':'o','ç':'c'};
+  return str.split('').map(ch=>map[ch]||ch).join('')
+            .toLowerCase().replace(/[^\p{L}\p{N}]+/gu,' ');
+}
+
+// ---- Form Submit ----
+document.getElementById("reportForm").addEventListener("submit",async e=>{
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const files = fd.getAll("photos");
+
+  if(files.length!==5){
+    alert("Lütfen 5 fotoğraf yükleyin (her kriter için 1).");
+    return;
+  }
+
+  const nick = fd.get("nick");
+  const rank = fd.get("rank");
+  const target = fd.get("target");
+  const type = fd.get("type");
+
+  let report = `📋 Eğitim Raporu\nNick: ${nick}\nRütbe: ${rank}\nDenetlenen: ${target}\nTür: ${type}\n\n`;
+
+  const output = document.getElementById("output");
+  output.innerHTML = "<p>OCR çalışıyor, lütfen bekleyin...</p>";
+  output.style.display="block";
+
+  const results=[];
+
+  for(let i=0;i<5;i++){
+    const f = files[i];
+    const crit = CRITERIA[i];
+    output.innerHTML += `<p>${i+1}. foto (${crit.name}) işleniyor...</p>`;
+    const {data} = await Tesseract.recognize(f,"tur+eng");
+    const text = normalize(data.text);
+    let ok=false;
+    for(const kw of crit.keywords){
+      if(text.includes(normalize(kw))){ ok=true; break; }
+    }
+    results.push({crit:crit.name,ok});
+  }
+
+  // Sonuç listesi
+  output.innerHTML = "<h3>Sonuç:</h3>";
+  results.forEach(r=>{
+    output.innerHTML += `<div>${r.crit}: ${r.ok?'<span class="ok">✅</span>':'<span class="fail">❌</span>'}</div>`;
+    report += `${r.ok?"✅":"❌"} ${r.crit}\n`;
+  });
+
+  // Discord butonunu hazırla
+  const sendBtn=document.getElementById("sendDiscord");
+  sendBtn.style.display="block";
+  sendBtn.onclick=()=>{
+    sendToDiscord(report);
+  };
+  window.finalReport = report; // kaydet
+});
+
+// ---- Discord gönderimi ----
+const WEBHOOK_URL = "https://discord.com/api/webhooks/1412178162279911536/39lLBgMg9a7V_vxMxpNgnrpnDoCF-qBKxph4-v2Kyrrl_FHKGRh9KTjCHOirnQ_82ctF"; 
+
+async function sendToDiscord(text){
+  if(!WEBHOOK_URL.startsWith("http")){
+    alert("Lütfen kod içinde webhook URL'ini ayarla!");
+    return;
+  }
+  await fetch(WEBHOOK_URL,{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({content:text})
+  });
+  alert("Discord’a gönderildi!");
+}
+
+// ---- Loader kapatma ----
+window.addEventListener("load", () => {
+  document.getElementById("loader").style.display = "none";
+});
+</script>
+
+</body>
+</html>
